@@ -1,0 +1,395 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Properties;
+import java.util.regex.*;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.master.balancer.LoadBalancerFactory;
+import org.apache.hadoop.hive.serde.serdeConstants;
+import org.apache.hadoop.hive.serde2.SerDe;
+import org.apache.hadoop.hive.serde2.SerDeException;
+import org.apache.hadoop.hive.serde2.SerDeStats;
+import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
+import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
+
+/**
+* A template for a custom Hive SerDe
+*/
+
+
+public class CustomSerDe implements SerDe {
+ 
+	public static final Log LOG = LogFactory.getLog(CustomSerDe.class.getName());	
+	
+ private StructTypeInfo rowInfo;
+ private ObjectInspector rowOI;
+ private List<String> columnNames;
+ private List<Object> row = new ArrayList<Object>();
+
+ /**
+  * An initialization function used to gather information about the table.
+  * Typically, a SerDe implementation will be interested in the list of
+  * column names and their types. That information will be used to help 
+  * perform actual serialization and deserialization of d ata.
+  */
+ @Override
+ public void initialize(Configuration conf, Properties tbl)
+     throws SerDeException {
+   // Get a list of the table's column names.
+   String colNamesStr = tbl.getProperty(serdeConstants.LIST_COLUMNS);
+   columnNames = Arrays.asList(colNamesStr.split(","));
+  
+   // Get a list of TypeInfos for the columns. This list lines up with
+   // the list of column names.
+   String colTypesStr = tbl.getProperty(serdeConstants.LIST_COLUMN_TYPES);
+   List<TypeInfo> colTypes =
+       TypeInfoUtils.getTypeInfosFromTypeString(colTypesStr);
+  
+   rowInfo =
+       (StructTypeInfo) TypeInfoFactory.getStructTypeInfo(columnNames, colTypes);
+   rowOI =
+       TypeInfoUtils.getStandardJavaObjectInspectorFromTypeInfo(rowInfo);
+ }
+
+ /**
+  * This method does the work of deserializing a record into Java objects
+  * that Hive can work with via the ObjectInspector interface.
+  */
+ @Override
+ public Object deserialize(Writable blob) throws SerDeException {
+   row.clear();
+   Text rowText = (Text)blob;
+   
+   LOG.fatal("Text : " + rowText);
+   
+   String[] deliveryText = rowText.toString().split("\\|");
+   
+   // Adding Country
+   row.add(deliveryText[0]);
+      
+   //Adding LogDateTime
+   row.add(deliveryText[1]);
+   
+     //Adding Trip Type
+   String tripType = deliveryText[3];
+   row.add(tripType);
+
+   if (tripType.trim().startsWith ("Unknown"))
+   {
+	   String destinationId = deliveryText[4];
+	   LOG.fatal("Destination ID : " + destinationId); 
+	   
+	   // Adding Destination id to driver id column
+	   row.add(destinationId);
+
+	   // Unknown Shipments section only has Destination id and is placed in driver Id column above....
+	   return row;
+   }
+
+   
+   String data = deliveryText[4];
+   
+   String delVanId = this.findStringBetweenTwoStrings("DeliveryDriver ", "(", data);
+   
+   LOG.fatal("DeliveryDriver ID : " + delVanId);
+   
+   // Adding deliverydriver Id -4
+   row.add(delVanId);
+   
+   String delVanType = this.findStringBetweenTwoStrings("(", ")", data);
+   
+   LOG.fatal("DeliveryDriver Type : " + delVanType);
+   // Adding delivery driver Type -5
+   row.add(delVanType);
+   
+   
+   String startPlaceDetail =   this.findStringBetweenTwoStrings("start at <", ">", data);
+   
+   if (startPlaceDetail != null)
+   {
+	   String startPlaceIdAndType[] = startPlaceDetail.split(" ");
+	   LOG.fatal("Start Place Id: " + startPlaceIdAndType[0]);
+	   LOG.fatal("Start Place Type: " + startPlaceIdAndType[1]);
+	   
+	   // Adding Start Place I
+	   row.add(startPlaceIdAndType[0]);
+	   
+	   // Adding Start Place Type - 7
+	   row.add(startPlaceIdAndType[1]);
+   }
+   else
+   {
+	   
+	   LOG.fatal("Start Place Id: " + "NA");
+	   LOG.fatal("Start Place Type: " + "NA");
+	   
+	   // Adding Start Place Id -6
+	   row.add("NA");
+	   
+	   // Adding Start Place Type - 7
+	   row.add("NA");
+	   
+   }
+   
+   String startDateAndTime =  this.findStringBetweenTwoStrings("time <", ">", data);
+   LOG.fatal("Start Date And Time : " + startDateAndTime);
+   
+   // Adding Start Time - 8
+   row.add(startDateAndTime);
+   
+   
+   String tripId = data.split("> : ")[1]; 
+   LOG.fatal("Trip Id : " + tripId);
+
+   // Adding Trip Id  - 9
+   row.add(tripId);
+
+   List <Object> legs = new ArrayList<Object>();
+
+   for (int index = 5; index < deliveryText.length; index++)
+   {
+	   String text = deliveryText[index];
+	   if (text.startsWith("Finish"))
+	   {
+
+		   row.add(legs);
+
+		   
+		   String finishLocationDetail =    this.findStringBetweenTwoStrings("Finish at <", ">", text);
+		   if (finishLocationDetail != null)
+		   {
+		   String finishLocationIdAndType[] = finishLocationDetail.split(" ");
+		   LOG.fatal("Finish Place Id: " + finishLocationIdAndType[0]);
+		   LOG.fatal("Finish Place Type: " + finishLocationIdAndType[1]);
+
+		   // Adding Finish Place Id and Type
+		   row.add(finishLocationIdAndType[0]);
+		   row.add(finishLocationIdAndType[1]);
+		   }
+		   else
+		   {
+			   LOG.fatal("Finish Place Id: " + "NA");
+			   LOG.fatal("Finish Place Type: " + "NA");
+
+			   // Adding Finish Place Id and Type
+			   row.add("NA");
+			   row.add("NA");
+			   
+		   }
+		   
+		   String endTime  =  this.findStringBetweenTwoStrings("time <", ">", text);
+		   
+		   // Adding End shift Time
+		   row.add(endTime);
+
+		   LOG.fatal("End Date And Time : " + endTime);
+
+		   //get EmptyLoad miles before start of this leg
+		   	
+		   String indexMinus1 = deliveryText[index-1].trim();
+		   
+		   if (indexMinus1.startsWith("EmptyLoad"))
+		   {
+			   String emptyMiles = this.findStringBetweenTwoStrings("= ", " mi", indexMinus1);
+			   String emptyMinutes = this.findStringBetweenTwoStrings(", ", " min", indexMinus1);
+			   LOG.fatal("EmptyLoad Miles To Finish : " + emptyMiles);
+			   LOG.fatal("EmptyLoad Minutes To Finish : " + emptyMinutes);
+			   
+			   // Adding EmptyLoad Miles to Finish
+			   row.add(Integer.parseInt((emptyMiles != null  && emptyMiles.trim().length() > 0 )? emptyMiles.trim() : "0"));
+			   //row.add(Integer.parseInt("0"));
+			   
+			   // Adding EmptyLoad Minutes to Finish
+			   row.add(Integer.parseInt(emptyMinutes.trim()));
+			   
+			   
+		   }
+		   else
+		   {
+			   LOG.fatal("EmptyLoad Miles To Finish : " + 0);
+			   LOG.fatal("EmptyLoad Minutes To Finish : " + 0);
+			   row.add(new Integer(0));
+			   
+			   row.add(new Integer(0));
+			   
+		   }
+
+	   }	   
+	   else if (text.contains("destination"))
+	   {
+		   List<Object> leg = new ArrayList<Object>();
+		   // start of a leg, loading line
+		   
+		   //get EmptyLoad miles before start of this leg
+
+		   legs.add(leg);	
+		   String indexMinus1 = deliveryText[index-1].trim();
+		   
+		   if (indexMinus1.startsWith("EmptyLoad"))
+		   {
+			   String emptyMiles = this.findStringBetweenTwoStrings("= ", " mi", indexMinus1);
+			   String emptyMinutes = this.findStringBetweenTwoStrings(", ", " min", indexMinus1);
+			   LOG.fatal("EmptyLoad Miles (Before) : " + emptyMiles);
+			   LOG.fatal("EmptyLoad Minutes (Before) : " + emptyMinutes);
+			   
+			   leg.add(Integer.parseInt(emptyMiles.trim())); //1
+			   leg.add (Integer.parseInt(emptyMinutes.trim())) ; //2
+			   
+		   }
+		   else
+		   {
+			   leg.add(new Integer(0)); //1
+			   leg.add (new Integer(0)) ; //2
+			   
+		   }
+		   
+		   //  parse Loading line
+		   String legShipmentId  = text.substring(0, text.indexOf(" "));
+		   LOG.fatal("Leg Destination Id: " + legShipmentId);
+		   
+		   leg.add(legShipmentId);  //3
+ 		   
+		   String destinationNumberStr = this.findStringBetweenTwoStrings("destination ", " ", text);
+		   LOG.fatal("destination Number : " + destinationNumberStr);
+		   leg.add(Integer.parseInt(destinationNumberStr)); //4
+		   
+		   String loadLegLocationDetail =    this.findStringBetweenTwoStrings("destination "+destinationNumberStr+" at <", ">", text);
+		   
+		   String locationid;
+		   String locationType;
+		   if(loadLegLocationDetail != null)
+		   {
+			   String loadLegLocationIdAndType[] = loadLegLocationDetail.split(" ");
+		   
+		   
+			   if( loadLegLocationIdAndType[0]!= null)
+				   locationid = loadLegLocationIdAndType[0];
+			   else
+				   locationid = "NA";
+			   if(loadLegLocationIdAndType[1] != null)
+				   locationType = loadLegLocationIdAndType[1];
+			   else
+				   locationType = "NA";
+		   }
+		   else
+		   {
+			   locationid = "NA";
+			   locationType = "NA";
+		   }
+		   LOG.fatal("Load Leg Place Id: " +locationid);
+		   LOG.fatal("Load Leg Place Type: " + locationType);
+		   
+		   leg.add(locationid);  //5
+		   leg.add(locationType);   //6
+		   
+		   String legLoadDateAndTime =  this.findStringBetweenTwoStrings("time <", ">", text);
+		   LOG.fatal("Leg Load Date And Time : " + legLoadDateAndTime);
+		   
+		   leg.add(legLoadDateAndTime);  //7
+
+		   
+		   
+		   String durationData = text.split(legLoadDateAndTime + "> ")[1];
+		   
+		   if (durationData.contains("mi"))
+
+		   {
+			   String temp[] = (this.findStringBetweenTwoStrings(legLoadDateAndTime+"> " , " mi", text)).split(" ");
+			   LOG.fatal("Leg Load Duration Time : " + temp[0].trim());
+			   LOG.fatal("Leg Miles : " + temp[1].trim());
+			   
+			   leg.add(Integer.parseInt(temp[0].trim()));    //8
+			   leg.add(Integer.parseInt(temp[1].trim()));    //9
+			   
+			   
+			   String legMinutes= this.findStringBetweenTwoStrings(", ", " min", text);
+			   LOG.fatal("Leg Minutes : " + legMinutes);
+			   
+			   leg.add(Integer.parseInt(legMinutes));  //10
+		   }
+		   else
+		   {
+			   LOG.fatal("Leg Load Duration Time : " + durationData.trim());
+			   leg.add(Integer.parseInt(durationData.trim()));    //8
+			   LOG.fatal("Leg Miles : " + 0);
+			   LOG.fatal("Leg Minutes : " + 0);
+			   
+			   leg.add(new Integer(0)); //9
+			   leg.add (new Integer(0)); //10
+			   	
+		   }
+		   
+	   }
+	   
+   }
+   
+   
+   // Do work to turn the fields in the blob into a set of row fields
+   return row;
+ }
+
+ 
+ private String findStringBetweenTwoStrings(String pattern1, String pattern2, String text)
+ {
+	// pattern1 and pattern2 are String objects
+	 String regexString = Pattern.quote(pattern1) + "(.*?)" + Pattern.quote(pattern2);
+	 Pattern pattern = Pattern.compile(regexString);
+	 
+	 Matcher matcher = pattern.matcher(text);
+	 String matchingString = null;
+	 
+	 
+	 if (matcher.find())
+	 {
+		 matchingString = matcher.group(1);
+	 }
+	 
+	 
+	 return matchingString;
+ }
+ /**
+  * Return an ObjectInspector for the row of data
+  */
+ @Override
+ public ObjectInspector getObjectInspector() throws SerDeException {
+   return rowOI;
+ }
+
+ /**
+  * Unimplemented
+  */
+ @Override
+ public SerDeStats getSerDeStats() {
+   return null;
+ }
+
+ /**
+  * Return the class that stores the serialized data representation.
+  */
+ @Override
+ public Class<? extends Writable> getSerializedClass() {
+   return Text.class;
+ }
+
+ /**
+  * This method takes an object representing a row of data from Hive, and
+  * uses the ObjectInspector to get the data for each column and serialize
+  * it.
+  */
+ @Override
+ public Writable serialize(Object obj, ObjectInspector oi)
+     throws SerDeException {
+   // Take the object and transform it into a serialized representation
+   return new Text();
+ }
+}
